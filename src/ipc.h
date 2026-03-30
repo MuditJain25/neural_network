@@ -7,40 +7,96 @@
 #include <fcntl.h>
 #include <stdexcept>
 #include <string>
+#include <array>
 
-// Neural Network Architecture Hyperparameters
-#define INPUT_SIZE 784
-#define HIDDEN_SIZE 256
-#define OUTPUT_SIZE 10
+// --- Flexible Compile-Time Architecture Config ---
+// ADD/REMOVE/RESIZE LAYERS HERE:
+constexpr std::array<int, 4> LAYER_SIZES = {784, 256, 128, 10};
+constexpr int NUM_LAYERS = LAYER_SIZES.size();
+
+// Compile-Time Helper: Calculate total weights across all layers
+constexpr int get_total_weights() {
+    int total = 0;
+    for (int i = 0; i < NUM_LAYERS - 1; ++i) {
+        total += LAYER_SIZES[i] * LAYER_SIZES[i + 1];
+    }
+    return total;
+}
+
+// Compile-Time Helper: Calculate total biases across all layers
+constexpr int get_total_biases() {
+    int total = 0;
+    for (int i = 0; i < NUM_LAYERS - 1; ++i) {
+        total += LAYER_SIZES[i + 1];
+    }
+    return total;
+}
+
+// Compile-Time Helper: Calculate total node activations across all layers
+constexpr int get_total_nodes() {
+    int total = 0;
+    for (int i = 0; i < NUM_LAYERS; ++i) {
+        total += LAYER_SIZES[i];
+    }
+    return total;
+}
+
+// Constexpr Offset Tables for fast runtime indexing
+constexpr std::array<int, NUM_LAYERS> get_weight_offsets() {
+    std::array<int, NUM_LAYERS> offsets = {0};
+    int current = 0;
+    for (int i = 0; i < NUM_LAYERS - 1; ++i) {
+        offsets[i] = current;
+        current += LAYER_SIZES[i] * LAYER_SIZES[i + 1];
+    }
+    return offsets;
+}
+
+constexpr std::array<int, NUM_LAYERS> get_bias_offsets() {
+    std::array<int, NUM_LAYERS> offsets = {0};
+    int current = 0;
+    for (int i = 0; i < NUM_LAYERS - 1; ++i) {
+        offsets[i] = current;
+        current += LAYER_SIZES[i + 1];
+    }
+    return offsets;
+}
+
+constexpr std::array<int, NUM_LAYERS> get_node_offsets() {
+    std::array<int, NUM_LAYERS> offsets = {0};
+    int current = 0;
+    for (int i = 0; i < NUM_LAYERS; ++i) {
+        offsets[i] = current;
+        current += LAYER_SIZES[i];
+    }
+    return offsets;
+}
+
+constexpr int TOTAL_WEIGHTS = get_total_weights();
+constexpr int TOTAL_BIASES = get_total_biases();
+constexpr int TOTAL_NODES = get_total_nodes();
+constexpr auto WEIGHT_OFFSETS = get_weight_offsets();
+constexpr auto BIAS_OFFSETS = get_bias_offsets();
+constexpr auto NODE_OFFSETS = get_node_offsets();
 
 // Memory layout for Shared Memory Segment
 struct SharedMemoryData {
     pthread_mutex_t mutex;
     pthread_barrier_t barrier;
 
-    // Weights and Biases
-    float W1[HIDDEN_SIZE][INPUT_SIZE];
-    float b1[HIDDEN_SIZE];
-    
-    float W2[OUTPUT_SIZE][HIDDEN_SIZE];
-    float b2[OUTPUT_SIZE];
+    // Flat Weight and Bias Arrays
+    float W[TOTAL_WEIGHTS];
+    float b[TOTAL_BIASES];
 
-    // Gradient Accumulators
-    float dW1[HIDDEN_SIZE][INPUT_SIZE];
-    float db1[HIDDEN_SIZE];
-    float dW2[OUTPUT_SIZE][HIDDEN_SIZE];
-    float db2[OUTPUT_SIZE];
+    // Flat Gradient Accumulators
+    float dW[TOTAL_WEIGHTS];
+    float db[TOTAL_BIASES];
 
-    // Forward Pass Variables
-    float A0[INPUT_SIZE];    // Input layer
-    float Z1[HIDDEN_SIZE];   // Hidden layer linear sum
-    float A1[HIDDEN_SIZE];   // Hidden layer activation (ReLU)
-    float Z2[OUTPUT_SIZE];   // Output layer linear sum
-    float A2[OUTPUT_SIZE];   // Output layer activation (Softmax)
-
-    // Backward Pass Errors
-    float dZ2[OUTPUT_SIZE];
-    float dZ1[HIDDEN_SIZE];
+    // Network State
+    // A contains activations (A[NODE_OFFSETS[0]] is Input, A[NODE_OFFSETS[1]] is layer 1...)
+    float Z[TOTAL_NODES];
+    float A[TOTAL_NODES];
+    float dZ[TOTAL_NODES];
 
     // Training state and metrics
     int current_label;
